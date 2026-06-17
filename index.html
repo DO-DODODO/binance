@@ -230,6 +230,12 @@ label { color: var(--text2); font-size: 11px; white-space: nowrap; }
   border-left: 2px solid var(--yellow);
 }
 .tr-row.hl .t-qty { color:var(--yellow); font-weight:700; }
+@keyframes trFlash {
+  0%   { background: rgba(255,255,255,0.08); }
+  100% { background: transparent; }
+}
+.tr-row.flash     { animation: trFlash 0.5s ease-out forwards; }
+.tr-row.hl.flash  { animation: trFlash 0.5s ease-out forwards; background: rgba(240,185,11,0.1); }
 
 /* scrollbar */
 ::-webkit-scrollbar { width:3px; }
@@ -676,7 +682,7 @@ function flushTrades() {
   const frag = document.createDocumentFragment();
   for (const t of pendingTrades) {
     const div = document.createElement('div');
-    div.className = `tr-row ${t.buy ? 'buy' : 'sell'}${hasT && t.qty >= thr ? ' hl' : ''}`;
+    div.className = `tr-row flash ${t.buy ? 'buy' : 'sell'}${hasT && t.qty >= thr ? ' hl' : ''}`;
     div.innerHTML = `<span class="t-price">${fmtP(t.price)}</span><span class="t-qty">${fmtQ(t.qty)}</span><span class="t-time">${fmtTime(t.time)}</span>`;
     frag.appendChild(div);
   }
