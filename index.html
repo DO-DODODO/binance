@@ -204,7 +204,7 @@ label { color: var(--text2); font-size: 11px; white-space: nowrap; }
 .tr-row {
   display: grid;
   grid-template-columns: var(--tw1,40%) var(--tw2,33%) var(--tw3,27%);
-  padding: 2.5px 12px;
+  padding: 2.5px 10px;
 }
 .tr-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rz-col {
@@ -350,7 +350,8 @@ let allSym   = [];
 let symPx    = {};
 let symTick  = {};
 
-const MAX_TR = 100;
+const MAX_TR = 200;
+const OB_MAX = 50;
 
 // ── ELEMENTS ──
 const $ = id => document.getElementById(id);
@@ -372,6 +373,29 @@ const lvlSel   = $('lvlSel');
 const unitSel  = $('unitSel');
 const hlInput  = $('hlInput');
 
+// ── PRE-ALLOCATE OB ROWS ──
+const askRowEls = [];
+const bidRowEls = [];
+
+function makeObRow(side) {
+  const el = document.createElement('div');
+  el.className = `ob-row ${side}`;
+  el.style.display = 'none';
+  const bar = document.createElement('div'); bar.className = 'depth-bar';
+  const p   = document.createElement('span'); p.className = 'ob-price';
+  const q   = document.createElement('span'); q.className = 'ob-qty';
+  const c   = document.createElement('span'); c.className = 'ob-cum';
+  const t   = document.createElement('span'); t.className = 'ob-tot';
+  el.append(bar, p, q, c, t);
+  return el;
+}
+(function initObRows() {
+  for (let i = 0; i < OB_MAX; i++) {
+    const a = makeObRow('ask'); askRowEls.push(a); asksWrap.appendChild(a);
+    const b = makeObRow('bid'); bidRowEls.push(b); bidsWrap.appendChild(b);
+  }
+})();
+
 // ── SYMBOL UI ──
 symBtn.addEventListener('click', () => {
   symDrop.classList.toggle('open');
@@ -391,17 +415,17 @@ symSearch.addEventListener('input', () => {
 async function loadSymbols() {
   try {
     const [r1, r2] = await Promise.all([
-      fetch('https://api.binance.com/api/v3/ticker/price'),
-      fetch('https://api.binance.com/api/v3/exchangeInfo')
+      fetch('https://fapi.binance.com/fapi/v1/ticker/price'),
+      fetch('https://fapi.binance.com/fapi/v1/exchangeInfo')
     ]);
     const prices = await r1.json();
     prices.forEach(d => { symPx[d.symbol] = parseFloat(d.price); });
     const info = await r2.json();
     info.symbols
-      .filter(s => s.status === 'TRADING' && s.quoteAsset === 'USDT')
+      .filter(s => s.status === 'TRADING' && s.quoteAsset === 'USDT' && s.contractType === 'PERPETUAL')
       .forEach(s => {
         const pf = s.filters.find(f => f.filterType === 'PRICE_FILTER');
-        if (pf) symTick[s.symbol] = parseFloat(pf.tickSize);
+        symTick[s.symbol] = pf ? parseFloat(pf.tickSize) : 0;
       });
     allSym = Object.keys(symTick).sort();
     renderSymUl(allSym);
@@ -413,7 +437,7 @@ async function loadSymbols() {
 async function loadTickSize() {
   if (symTick[symbol]) return;
   try {
-    const r = await fetch(`https://api.binance.com/api/v3/exchangeInfo?symbol=${symbol}`);
+    const r = await fetch(`https://fapi.binance.com/fapi/v1/exchangeInfo?symbol=${symbol}`);
     const data = await r.json();
     const pf = data.symbols[0].filters.find(f => f.filterType === 'PRICE_FILTER');
     if (pf) symTick[symbol] = parseFloat(pf.tickSize);
@@ -448,9 +472,11 @@ function resetConnect() {
   lastId   = 0;
   trades   = [];
   lastPx   = null;
-  trBody.innerHTML   = '';
-  asksWrap.innerHTML = '';
-  bidsWrap.innerHTML = '';
+  trBody.innerHTML = '';
+  for (let i = 0; i < OB_MAX; i++) {
+    askRowEls[i].style.display = 'none';
+    bidRowEls[i].style.display = 'none';
+  }
   unit = 0;
   setConn(false, '연결 중...');
   loadTickSize().then(() => connect());
@@ -458,11 +484,14 @@ function resetConnect() {
 
 function connect() {
   const s = symbol.toLowerCase();
-  ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${s}@depth@100ms/${s}@trade/${s}@ticker`);
+  ws = new WebSocket(`wss://fstream.binance.com/stream?streams=${s}@depth@100ms/${s}@trade/${s}@ticker`);
   ws.onopen  = () => { setConn(true, '실시간'); loadSnap(); };
   ws.onmessage = e => {
-    const { stream, data } = JSON.parse(e.data);
-    if (stream.includes('@depth'))  onDepthMsg(data);
+    const msg = JSON.parse(e.data);
+    const stream = msg.stream;
+    const data   = msg.data;
+    if (!stream) return;
+    if (stream.includes('@depth'))       onDepthMsg(data);
     else if (stream.includes('@trade'))  onTrade(data);
     else if (stream.includes('@ticker')) onTicker(data);
   };
@@ -472,7 +501,7 @@ function connect() {
 
 async function loadSnap() {
   try {
-    const r = await fetch(`https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=1000`);
+    const r = await fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=1000`);
     const snap = await r.json();
     book.asks = new Map(snap.asks);
     book.bids = new Map(snap.bids);
@@ -487,8 +516,12 @@ async function loadSnap() {
 
 let rafOB = null;
 let rafTR = null;
+let pendingTrades = [];
 function scheduleOB() { if (!rafOB) rafOB = requestAnimationFrame(() => { rafOB = null; renderOB(); }); }
-function scheduleTR() { if (!rafTR) rafTR = requestAnimationFrame(() => { rafTR = null; renderTrades(); }); }
+function scheduleTR(t) {
+  pendingTrades.push(t);
+  if (!rafTR) rafTR = requestAnimationFrame(() => { rafTR = null; flushTrades(); });
+}
 
 function onDepthMsg(data) {
   if (!snapDone) { buf.push(data); return; }
@@ -548,6 +581,22 @@ function groupSide(map, side) {
 }
 
 // ── RENDER ORDER BOOK ──
+function setObRow(el, p, q, cumQ, totQ, maxQ, isAsk, totHl) {
+  const bar = el.children[0];
+  const pEl = el.children[1];
+  const qEl = el.children[2];
+  const cEl = el.children[3];
+  const tEl = el.children[4];
+  bar.style.width   = (q / maxQ * 100).toFixed(1) + '%';
+  pEl.textContent   = fmtP(p);
+  qEl.textContent   = fmtQ(q);
+  cEl.textContent   = fmtQ(cumQ);
+  tEl.textContent   = fmtQ(totQ);
+  const cls = isAsk ? (totHl ? 'ob-tot hl-sell' : 'ob-tot') : (totHl ? 'ob-tot hl-buy' : 'ob-tot');
+  if (tEl.className !== cls) tEl.className = cls;
+  if (el.style.display !== '') el.style.display = '';
+}
+
 function renderOB() {
   if (!snapDone) return;
 
@@ -559,96 +608,100 @@ function renderOB() {
   const askHl  = askTot > bidTot;
   const bidHl  = bidTot > askTot;
 
-  const allQ  = [...asksRaw, ...bidsRaw].map(([,q])=>q);
-  const maxQ  = allQ.length ? Math.max(...allQ) : 1;
+  let maxQ = 0;
+  for (const [,q] of asksRaw) if (q > maxQ) maxQ = q;
+  for (const [,q] of bidsRaw) if (q > maxQ) maxQ = q;
+  if (!maxQ) maxQ = 1;
 
-  // ── ASKS ──
-  // Display: top = highest ask, bottom = lowest ask (nearest spread)
-  // Cumulative: grows from lowest ask (bottom) upward
+  // ASKS: top = highest, bottom = lowest (nearest spread)
   if (view !== 'bids') {
-    const rev = [...asksRaw].reverse(); // rev[0]=highest, rev[last]=lowest
+    const rev  = [...asksRaw].reverse();
     const cums = new Array(rev.length);
     let run = 0;
     for (let i = rev.length - 1; i >= 0; i--) { run += rev[i][1]; cums[i] = run; }
-    asksWrap.innerHTML = rev.map(([p,q], i) => {
-      const pct = (q / maxQ * 100).toFixed(1);
-      const totCls = askHl ? 'ob-tot hl-sell' : 'ob-tot';
-      return `<div class="ob-row ask">
-        <div class="depth-bar" style="width:${pct}%"></div>
-        <span class="ob-price">${fmtP(p)}</span>
-        <span class="ob-qty">${fmtQ(q)}</span>
-        <span class="ob-cum">${fmtQ(cums[i])}</span>
-        <span class="${totCls}">${fmtQ(askTot)}</span>
-      </div>`;
-    }).join('');
+    for (let i = 0; i < OB_MAX; i++) {
+      if (i < rev.length) {
+        setObRow(askRowEls[i], rev[i][0], rev[i][1], cums[i], askTot, maxQ, true, askHl);
+      } else if (askRowEls[i].style.display !== 'none') {
+        askRowEls[i].style.display = 'none';
+      }
+    }
   } else {
-    asksWrap.innerHTML = '';
+    for (let i = 0; i < OB_MAX; i++) askRowEls[i].style.display = 'none';
   }
 
-  // ── BIDS ──
-  // Display: top = highest bid (nearest spread), cumulative grows downward
+  // BIDS: top = highest (nearest spread), cumulative grows down
   if (view !== 'asks') {
     let cum = 0;
-    bidsWrap.innerHTML = bidsRaw.map(([p,q]) => {
-      cum += q;
-      const pct = (q / maxQ * 100).toFixed(1);
-      const totCls = bidHl ? 'ob-tot hl-buy' : 'ob-tot';
-      return `<div class="ob-row bid">
-        <div class="depth-bar" style="width:${pct}%"></div>
-        <span class="ob-price">${fmtP(p)}</span>
-        <span class="ob-qty">${fmtQ(q)}</span>
-        <span class="ob-cum">${fmtQ(cum)}</span>
-        <span class="${totCls}">${fmtQ(bidTot)}</span>
-      </div>`;
-    }).join('');
+    for (let i = 0; i < OB_MAX; i++) {
+      if (i < bidsRaw.length) {
+        cum += bidsRaw[i][1];
+        setObRow(bidRowEls[i], bidsRaw[i][0], bidsRaw[i][1], cum, bidTot, maxQ, false, bidHl);
+      } else if (bidRowEls[i].style.display !== 'none') {
+        bidRowEls[i].style.display = 'none';
+      }
+    }
   } else {
-    bidsWrap.innerHTML = '';
+    for (let i = 0; i < OB_MAX; i++) bidRowEls[i].style.display = 'none';
   }
 
-  // ── SPREAD ──
+  // SPREAD
   if (asksRaw.length && bidsRaw.length) {
     const ba = asksRaw[0][0], bb = bidsRaw[0][0];
     spVal.textContent = `스프레드 ${(ba - bb).toFixed(decPl(ba))}`;
   }
   if (lastPx != null) {
     spPrice.textContent = fmtP(lastPx);
-    spPrice.className = `sp-price ${pxDir}`;
+    spPrice.className   = `sp-price ${pxDir}`;
   }
 }
 
 // ── TRADES ──
 function onTrade(d) {
-  trades.unshift({ price: parseFloat(d.p), qty: parseFloat(d.q), time: d.T, buy: !d.m });
+  const price = parseFloat(d.p);
+  pxDir  = price >= (lastPx ?? price) ? 'up' : 'down';
+  lastPx = price;
+  curPriceEl.textContent = fmtP(price);
+  curPriceEl.className   = 'cur-price' + (pxDir === 'down' ? ' down' : '');
+  if (!unit) rebuildUnitOpts();
+  const t = { price, qty: parseFloat(d.q), time: d.T, buy: !d.m };
+  trades.unshift(t);
   if (trades.length > MAX_TR) trades.pop();
-  scheduleTR();
+  scheduleTR(t);
 }
+
+function flushTrades() {
+  const thr  = parseFloat(hlInput.value);
+  const hasT = !isNaN(thr) && thr > 0;
+  const frag = document.createDocumentFragment();
+  for (const t of pendingTrades) {
+    const div = document.createElement('div');
+    div.className = `tr-row ${t.buy ? 'buy' : 'sell'}${hasT && t.qty >= thr ? ' hl' : ''}`;
+    div.innerHTML = `<span class="t-price">${fmtP(t.price)}</span><span class="t-qty">${fmtQ(t.qty)}</span><span class="t-time">${fmtTime(t.time)}</span>`;
+    frag.appendChild(div);
+  }
+  pendingTrades = [];
+  trBody.insertBefore(frag, trBody.firstChild);
+  while (trBody.children.length > MAX_TR) trBody.removeChild(trBody.lastChild);
+}
+
 function renderTrades() {
-  const thr = parseFloat(hlInput.value);
+  const thr  = parseFloat(hlInput.value);
   const hasT = !isNaN(thr) && thr > 0;
   trBody.innerHTML = trades.map(t => {
-    const tm = new Date(t.time).toTimeString().slice(0,8);
     const hl = hasT && t.qty >= thr ? ' hl' : '';
-    return `<div class="tr-row ${t.buy?'buy':'sell'}${hl}">
-      <span class="t-price">${fmtP(t.price)}</span>
-      <span class="t-qty">${fmtQ(t.qty)}</span>
-      <span class="t-time">${tm}</span>
-    </div>`;
+    return `<div class="tr-row ${t.buy?'buy':'sell'}${hl}"><span class="t-price">${fmtP(t.price)}</span><span class="t-qty">${fmtQ(t.qty)}</span><span class="t-time">${fmtTime(t.time)}</span></div>`;
   }).join('');
 }
 hlInput.addEventListener('input', renderTrades);
 
 // ── TICKER ──
 function onTicker(d) {
-  const p   = parseFloat(d.c);
   const pct = parseFloat(d.P);
-  pxDir  = p >= (lastPx ?? p) ? 'up' : 'down';
-  lastPx = p;
-  curPriceEl.textContent = fmtP(p);
-  curPriceEl.className   = 'cur-price' + (pxDir==='down' ? ' down' : '');
+  if (!isFinite(pct)) return;
   const sign = pct >= 0 ? '+' : '';
   pctEl.textContent = `${sign}${pct.toFixed(2)}%`;
   pctEl.className   = 'pct' + (pct < 0 ? ' down' : '');
-  if (!unit) rebuildUnitOpts();
 }
 
 // ── VIEW TOGGLE ──
@@ -683,6 +736,12 @@ function decPl(p) {
   if (p >= 1)    return 4;
   return 6;
 }
+function fmtTime(ts) {
+  const d = new Date(ts);
+  return d.getHours().toString().padStart(2,'0') + ':' +
+         d.getMinutes().toString().padStart(2,'0') + ':' +
+         d.getSeconds().toString().padStart(2,'0');
+}
 
 // ── COLUMN RESIZE ──
 let trW = [40, 33, 27]; // percentages
@@ -709,11 +768,15 @@ function rzMove(e) {
   const panelW = document.querySelector('.tr-panel').offsetWidth;
   const dPct = (dx / panelW) * 100;
   const col = rzState.col;
-  const w0 = Math.max(15, rzState.startW[col] + dPct);
-  const w1 = Math.max(15, rzState.startW[col + 1] - dPct);
-  trW = [...rzState.startW];
-  trW[col] = w0;
-  trW[col + 1] = w1;
+  const sw = rzState.startW;
+  trW = [...sw];
+  if (col === 0) {
+    trW[0] = Math.max(15, Math.min(sw[0] + dPct, 100 - 15 - sw[2]));
+    trW[1] = 100 - trW[0] - sw[2];
+  } else {
+    trW[1] = Math.max(15, Math.min(sw[1] + dPct, 100 - sw[0] - 15));
+    trW[2] = 100 - sw[0] - trW[1];
+  }
   applyTrW();
 }
 
