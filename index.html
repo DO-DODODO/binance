@@ -199,12 +199,13 @@ label { color: var(--text2); font-size: 11px; white-space: nowrap; }
 
 /* ── TRADES ── */
 .tr-panel { flex:1; }
-.tr-col { grid-template-columns: 1fr 1fr 1fr; }
+.tr-col { grid-template-columns: 1.3fr 1fr 0.9fr; gap: 12px; }
 .tr-body { flex:1; overflow-y:auto; min-height:0; }
 .tr-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  padding: 2px 10px;
+  grid-template-columns: 1.3fr 1fr 0.9fr;
+  gap: 12px;
+  padding: 2.5px 12px;
 }
 .tr-row.buy .t-price  { color: var(--buy); }
 .tr-row.sell .t-price { color: var(--sell); }
@@ -454,10 +455,15 @@ async function loadSnap() {
   } catch(e) { setTimeout(loadSnap, 1200); }
 }
 
+let rafOB = null;
+let rafTR = null;
+function scheduleOB() { if (!rafOB) rafOB = requestAnimationFrame(() => { rafOB = null; renderOB(); }); }
+function scheduleTR() { if (!rafTR) rafTR = requestAnimationFrame(() => { rafTR = null; renderTrades(); }); }
+
 function onDepthMsg(data) {
   if (!snapDone) { buf.push(data); return; }
   applyDiff(data);
-  renderOB();
+  scheduleOB();
 }
 function applyDiff(ev) {
   if (ev.u <= lastId) return;
@@ -575,7 +581,7 @@ function renderOB() {
 function onTrade(d) {
   trades.unshift({ price: parseFloat(d.p), qty: parseFloat(d.q), time: d.T, buy: !d.m });
   if (trades.length > MAX_TR) trades.pop();
-  renderTrades();
+  scheduleTR();
 }
 function renderTrades() {
   const thr = parseFloat(hlInput.value);
