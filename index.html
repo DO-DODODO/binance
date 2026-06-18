@@ -688,8 +688,8 @@ function renderOB() {
 
   const askTot = asksRaw.reduce((s,[,q])=>s+q, 0);
   const bidTot = bidsRaw.reduce((s,[,q])=>s+q, 0);
-  const askHl  = askTot >= bidTot * 1.5;
-  const bidHl  = bidTot >= askTot * 1.5;
+  const askHl  = askTot >= bidTot * 2;
+  const bidHl  = bidTot >= askTot * 2;
 
   let maxQ = 0;
   for (const [,q] of asksRaw) if (q > maxQ) maxQ = q;
