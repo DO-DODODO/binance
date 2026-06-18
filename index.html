@@ -230,12 +230,7 @@ label { color: var(--text2); font-size: 11px; white-space: nowrap; }
   border-left: 2px solid var(--yellow);
 }
 .tr-row.hl .t-qty { color:var(--yellow); font-weight:700; }
-@keyframes trFlash {
-  0%   { background: rgba(255,255,255,0.08); }
-  100% { background: transparent; }
-}
-.tr-row.flash     { animation: trFlash 0.5s ease-out forwards; }
-.tr-row.hl.flash  { animation: trFlash 0.5s ease-out forwards; background: rgba(240,185,11,0.1); }
+.tr-row.hl.flash  { background: rgba(240,185,11,0.1); }
 
 /* ── TR WRAPPER ── */
 .tr-col-wrap {
