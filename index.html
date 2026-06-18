@@ -380,6 +380,7 @@ label { color: var(--text2); font-size: 11px; white-space: nowrap; }
       <label>하이라이트 수량 ≥
         <input type="number" id="hlInput" placeholder="없음" min="0" step="any" style="width:80px">
       </label>
+      <span id="hlLast" style="font-size:12px;"></span>
     </div>
     <div class="col-hdr tr-col" id="trColHdr">
       <span class="rz-col" id="rz0">가격(USDT)</span>
@@ -603,7 +604,8 @@ async function loadSnap() {
 let rafOB = null;
 let rafTR = null;
 let pendingTrades = [];
-function scheduleOB() { if (!rafOB) rafOB = requestAnimationFrame(() => { rafOB = null; renderOB(); }); }
+const OB_INTERVAL = 180;
+function scheduleOB() { if (!rafOB) rafOB = setTimeout(() => { rafOB = null; renderOB(); }, OB_INTERVAL); }
 function scheduleTR(t) {
   pendingTrades.push(t);
   if (!rafTR) rafTR = requestAnimationFrame(() => { rafTR = null; flushTrades(); });
@@ -757,15 +759,23 @@ function onTrade(d) {
   scheduleTR(t);
 }
 
+function updateHlLast(t) {
+  const el = $('hlLast');
+  if (!t) { el.textContent = ''; return; }
+  el.innerHTML = `<span style="color:${t.buy ? 'var(--buy)' : 'var(--sell)'};font-weight:700">${fmtP(t.price)}</span> <span style="color:var(--text2)">${fmtQ(t.qty)}</span>`;
+}
+
 function flushTrades() {
   const thr  = parseFloat(hlInput.value);
   const hasT = !isNaN(thr) && thr > 0;
   const frag = document.createDocumentFragment();
   for (const t of pendingTrades) {
+    const isHl = hasT && t.qty >= thr;
     const div = document.createElement('div');
-    div.className = `tr-row flash ${t.buy ? 'buy' : 'sell'}${hasT && t.qty >= thr ? ' hl' : ''}`;
+    div.className = `tr-row flash ${t.buy ? 'buy' : 'sell'}${isHl ? ' hl' : ''}`;
     div.innerHTML = `<span class="t-price">${fmtP(t.price)}</span><span class="t-qty">${fmtQ(t.qty)}</span><span class="t-time">${fmtTime(t.time)}</span>`;
     frag.appendChild(div);
+    if (isHl) updateHlLast(t);
   }
   pendingTrades = [];
   trBody.insertBefore(frag, trBody.firstChild);
@@ -780,7 +790,7 @@ function renderTrades() {
     return `<div class="tr-row ${t.buy?'buy':'sell'}${hl}"><span class="t-price">${fmtP(t.price)}</span><span class="t-qty">${fmtQ(t.qty)}</span><span class="t-time">${fmtTime(t.time)}</span></div>`;
   }).join('');
 }
-hlInput.addEventListener('input', renderTrades);
+hlInput.addEventListener('input', () => { renderTrades(); updateHlLast(null); });
 
 // ── TICKER ──
 function onTicker(d) {
